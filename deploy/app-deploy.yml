@@ -1,0 +1,157 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "app"
+        vault.hashicorp.com/agent-cache-enable: "true"
+        vault.hashicorp.com/agent-cache-use-auto-auth-token: "true"
+
+        vault.hashicorp.com/agent-inject-secret-ca.pem: ""
+        vault.hashicorp.com/secret-volume-path-ca.pem: "/fluentd/cert"
+        vault.hashicorp.com/agent-inject-template-ca.pem: |
+          {{- with secret "pki/issue/app" "common_name=app-a.service.internal" -}}
+          {{ .Data.issuing_ca }}
+          {{- end }}
+
+        vault.hashicorp.com/agent-inject-secret-key.pem: ""
+        vault.hashicorp.com/secret-volume-path-key.pem: "/fluentd/cert"
+        vault.hashicorp.com/agent-inject-template-key.pem: |
+          {{- with secret "pki/issue/app" "common_name=app-a.service.internal" -}}
+          {{ .Data.private_key }}
+          {{- end }}
+
+        vault.hashicorp.com/agent-inject-secret-cert.pem: ""
+        vault.hashicorp.com/secret-volume-path-cert.pem: "/fluentd/cert"
+        vault.hashicorp.com/agent-inject-template-cert.pem: |
+          {{- with secret "pki/issue/app" "common_name=app-a.service.internal" -}}
+          {{ .Data.certificate }}
+          {{- end }}
+
+        vault.hashicorp.com/agent-inject-secret-fluent.conf: ""
+        vault.hashicorp.com/secret-volume-path-fluent.conf: "/fluentd/etc"
+        vault.hashicorp.com/agent-inject-template-fluent.conf: |
+          <system>
+            log_level debug
+          </system>
+
+          # TCP input
+          <source>
+            @type forward
+            port 24224
+          </source>
+
+          <source>
+            @type tail
+            path /fluentd/log/user.log
+            pos_file /fluentd/log/user.pos
+            @log_level debug
+            tag user.log
+            <parse>
+              @type json
+            </parse>
+          </source>
+
+          <match user.log>
+              @type kafka2
+              # list of seed brokers
+              brokers {{- with secret "kv/data/confluent-cloud" }} {{ .Data.data.connection_string }}{{- end }}
+              use_event_time true
+
+              # buffer settings
+              <buffer ingress>
+                @type file
+                path /fluentd/td/log
+                flush_interval 1s
+              </buffer>
+
+              # data type settings
+              <format>
+                @type json
+              </format>
+
+              # topic settings
+              topic_key app-a-ingress
+              default_topic app-a-ingress
+
+              # producer settings
+              required_acks -1
+              compression_codec gzip
+              ssl_ca_cert '/fluentd/cert/ca.pem' 
+              ssl_client_cert '/fluentd/cert/cert.pem'
+              ssl_client_cert_key '/fluentd/cert/key.pem'
+              sasl_over_ssl true
+              ssl_ca_certs_from_system true
+              username {{- with secret "kv/data/confluent-cloud" }} {{ .Data.data.client_id }}{{- end }}
+              password {{- with secret "kv/data/confluent-cloud" }} {{ .Data.data.client_secret }}{{- end }}
+          </match>
+
+    
+    spec:
+      serviceAccountName: app
+      containers:
+      - name: app
+        env:
+        - name: NUM_OF_RUNS
+          value: '10'
+        - name: PATH_TO_LOG
+          value: '/fluentd/log/user.log'
+        image: moayadi/vault-confluentcloud-demo:app-latest
+        imagePullPolicy: Always
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name:  app-log
+          mountPath:  /fluentd/log
+
+      - name: fluentd
+        image: moayadi/vault-confluentcloud-demo:fluentd-latest
+        imagePullPolicy: Always
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 24224
+        volumeMounts:
+        - name:  app-log
+          mountPath:  /fluentd/log
+
+      volumes:
+      - name: app-log
+        emptyDir: {}
+---
+
+kind: Service
+apiVersion: v1
+metadata:
+  name:  app
+spec:
+  selector:
+    app:  app
+  type:  ClusterIP
+  ports:
+  - name:  tcp
+    port:  8080
+    targetPort:  8080
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name:  app
+
