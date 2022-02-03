@@ -32,7 +32,7 @@ resource "vault_mount" "transform" {
 resource "vault_transform_template" "sg-nric" {
   provider = vault.internal
   alphabet = "builtin/numeric"
-  pattern = "[A-Z]{1}(\\d{7})[A-Z]{1}"
+  pattern = "[A-Z]{1}(\d{7})[A-Z]{1}"
   type = "regex"
   name = "sg-nric"
   path = vault_mount.transform.path
@@ -41,7 +41,7 @@ resource "vault_transform_template" "sg-nric" {
 resource "vault_transform_template" "sg-phone" {
   provider = vault.internal
   alphabet = "builtin/numeric"
-  pattern = "[+](\\d{2})-(\\d{4})-(\\d{4})"
+  pattern = "[+](\d{2})-(\d{4})-(\d{4})"
   type = "regex"
   name = "sg-phone"
   path = vault_mount.transform.path
